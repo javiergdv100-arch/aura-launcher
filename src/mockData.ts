@@ -19,7 +19,7 @@ export const mockInstances: Instance[] = [
   {
     id: "aura-club",
     name: "Aura Club",
-    mcVersion: "1.21.11",
+    mcVersion: "1.21.1",
     loader: "NeoForge",
     loaderVersion: "latest",
     source: "aura",
@@ -32,7 +32,7 @@ export const mockInstances: Instance[] = [
   {
     id: "modrinth-fabric-lab",
     name: "Modrinth Fabric Lab",
-    mcVersion: "1.21.10",
+    mcVersion: "1.21.1",
     loader: "Fabric",
     loaderVersion: "0.16.x",
     source: "modrinth",
@@ -138,7 +138,7 @@ export const mockInstalledAddons: Record<string, InstalledAddon[]> = {
       id: "sodium",
       name: "Sodium",
       provider: "modrinth",
-      fileName: "sodium-fabric-0.6.16+mc1.21.11.jar",
+      fileName: "sodium-fabric-0.6.16+mc1.21.1.jar",
       version: "0.6.16",
       status: "enabled",
       required: false
@@ -147,7 +147,7 @@ export const mockInstalledAddons: Record<string, InstalledAddon[]> = {
       id: "iris",
       name: "Iris Shaders",
       provider: "modrinth",
-      fileName: "iris-1.9.3+mc1.21.11.jar",
+      fileName: "iris-1.9.3+mc1.21.1.jar",
       version: "1.9.3",
       status: "updateAvailable",
       required: false

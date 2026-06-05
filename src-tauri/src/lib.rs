@@ -1,5 +1,10 @@
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use std::{
+    fs::{self, OpenOptions},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -131,10 +136,29 @@ async fn instances_launch(instance_id: String) -> Result<LaunchResult, String> {
         return Err("Instance id cannot be empty".into());
     }
 
+    let instance = seed_instances()
+        .into_iter()
+        .find(|instance| instance.id == instance_id)
+        .unwrap_or_else(|| Instance {
+            id: instance_id.clone(),
+            name: "Custom Aura Instance".into(),
+            mc_version: "1.21.1".into(),
+            loader: "Vanilla".into(),
+            loader_version: "latest".into(),
+            source: "manual".into(),
+            path: "%APPDATA%/AuraLauncher/instances/custom".into(),
+            icon: "A".into(),
+            banner: "aurora".into(),
+            status: "ready".into(),
+            last_played: None,
+        });
+
+    spawn_minecraft_helper(&instance)?;
+
     Ok(LaunchResult {
         instance_id,
         status: "queued".into(),
-        log: "Native launch pipeline is wired. Minecraft download/auth execution is the next core milestone.".into(),
+        log: "Minecraft launch started. Complete the Microsoft login in the browser if prompted.".into(),
     })
 }
 
@@ -277,7 +301,7 @@ fn seed_instances() -> Vec<Instance> {
         Instance {
             id: "eufonia-inspired-club".into(),
             name: "Aura Club".into(),
-            mc_version: "1.21.11".into(),
+            mc_version: "1.21.1".into(),
             loader: "NeoForge".into(),
             loader_version: "latest".into(),
             source: "aura".into(),
@@ -290,7 +314,7 @@ fn seed_instances() -> Vec<Instance> {
         Instance {
             id: "modrinth-fabric".into(),
             name: "Modrinth Fabric Lab".into(),
-            mc_version: "1.21.10".into(),
+            mc_version: "1.21.1".into(),
             loader: "Fabric".into(),
             loader_version: "0.16.x".into(),
             source: "modrinth".into(),
@@ -316,6 +340,67 @@ fn sanitize_id(value: &str) -> String {
             }
         })
         .collect()
+}
+
+fn spawn_minecraft_helper(instance: &Instance) -> Result<(), String> {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "Could not resolve Aura project root".to_string())?;
+    let script_path = project_root.join("scripts").join("launch-minecraft.mjs");
+
+    if !script_path.exists() {
+        return Err(format!("Minecraft launcher helper not found at {}", script_path.display()));
+    }
+
+    let root = aura_minecraft_root();
+    let logs_dir = root.join("logs");
+    fs::create_dir_all(&logs_dir).map_err(|error| format!("Could not create launch logs folder: {error}"))?;
+
+    let log_path = logs_dir.join("aura-helper-process.log");
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|error| format!("Could not open launch log: {error}"))?;
+    let stderr = stdout
+        .try_clone()
+        .map_err(|error| format!("Could not prepare launch log: {error}"))?;
+
+    let payload = serde_json::json!({
+        "id": instance.id,
+        "name": instance.name,
+        "mcVersion": instance.mc_version,
+        "loader": instance.loader,
+        "root": root,
+        "memoryMax": "4G",
+        "memoryMin": "2G"
+    });
+
+    Command::new("node")
+        .arg(script_path)
+        .arg(payload.to_string())
+        .current_dir(project_root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr))
+        .spawn()
+        .map_err(|error| {
+            format!(
+                "Could not start Minecraft helper. Make sure Node.js is installed and available in PATH. Error: {error}"
+            )
+        })?;
+
+    Ok(())
+}
+
+fn aura_minecraft_root() -> PathBuf {
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        return PathBuf::from(appdata).join("AuraLauncher").join("minecraft");
+    }
+
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(".aura-minecraft")
 }
 
 pub fn run() {

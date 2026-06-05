@@ -40,7 +40,7 @@ type DrawerTab = "instances" | "addons" | "downloads";
 type AddSource = Provider | "local" | "quick";
 
 const loaders: Loader[] = ["Vanilla", "Forge", "Fabric", "Quilt", "NeoForge"];
-const versions = ["1.21.11", "1.21.10", "1.21.1", "1.20.1", "1.19.2"];
+const versions = ["1.21.1", "1.20.1", "1.19.2", "1.18.2", "1.16.5"];
 
 function formatDownloads(downloads: number) {
   return new Intl.NumberFormat("en", { notation: "compact" }).format(downloads);
@@ -64,7 +64,7 @@ function App() {
   const [launchLog, setLaunchLog] = useState("Ready");
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState("New Aura Instance");
-  const [newVersion, setNewVersion] = useState("1.21.11");
+  const [newVersion, setNewVersion] = useState("1.21.1");
   const [newLoader, setNewLoader] = useState<Loader>("NeoForge");
 
   useEffect(() => {
