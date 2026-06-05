@@ -1,8 +1,10 @@
 import { Client } from "minecraft-launcher-core";
-import { Authflow, Titles } from "prismarine-auth";
+import prismarineAuth from "prismarine-auth";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+const { Authflow, Titles } = prismarineAuth;
 
 const rawArg = process.argv[2] ?? "{}";
 const payload = rawArg.startsWith("@")
