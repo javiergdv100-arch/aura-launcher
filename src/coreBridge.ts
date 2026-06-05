@@ -2,7 +2,10 @@ import type {
   Account,
   AddonSearchRequest,
   AddonSearchResult,
+  AddonType,
+  InstalledAddon,
   Instance,
+  InstanceUpdate,
   LaunchResult,
   LauncherSettings,
   Loader
@@ -13,7 +16,11 @@ type CommandName =
   | "accounts_login_microsoft"
   | "instances_list"
   | "instances_create"
+  | "instances_update"
+  | "instances_delete"
   | "instances_launch"
+  | "addons_list"
+  | "addons_install"
   | "addons_search"
   | "settings_get";
 
@@ -122,6 +129,29 @@ export const coreBridge = {
     }
   },
 
+  async updateInstance(instanceId: string, update: InstanceUpdate): Promise<Instance> {
+    try {
+      return await invokeNative<Instance>("instances_update", { instanceId, update });
+    } catch {
+      return {
+        id: instanceId,
+        source: "manual",
+        path: "%APPDATA%/AuraLauncher/instances/custom",
+        status: "ready",
+        lastPlayed: null,
+        ...update
+      };
+    }
+  },
+
+  async deleteInstance(instanceId: string, deleteFiles = false): Promise<Instance[]> {
+    try {
+      return await invokeNative<Instance[]>("instances_delete", { instanceId, deleteFiles });
+    } catch {
+      return mockInstances.filter((instance) => instance.id !== instanceId);
+    }
+  },
+
   async searchAddons(request: AddonSearchRequest): Promise<AddonSearchResult[]> {
     if (isTauriRuntime()) {
       return await invokeNative<AddonSearchResult[]>("addons_search", { request });
@@ -138,6 +168,33 @@ export const coreBridge = {
     }
   },
 
+  async listInstalledAddons(instanceId: string): Promise<InstalledAddon[]> {
+    try {
+      return await invokeNative<InstalledAddon[]>("addons_list", { instanceId });
+    } catch {
+      return mockInstalledFallback(instanceId);
+    }
+  },
+
+  async installAddon(instanceId: string, addon: AddonSearchResult, projectType: AddonType): Promise<InstalledAddon[]> {
+    try {
+      return await invokeNative<InstalledAddon[]>("addons_install", { instanceId, addon, projectType });
+    } catch {
+      const provider = addon.provider === "curseforge" ? "curseforge" : "modrinth";
+      return [
+        {
+          id: `${addon.provider}-${addon.projectId}`,
+          name: addon.name,
+          provider,
+          fileName: `${addon.projectId}.jar`,
+          version: "latest",
+          status: "enabled",
+          required: false
+        }
+      ];
+    }
+  },
+
   async getSettings(): Promise<LauncherSettings> {
     try {
       return await invokeNative<LauncherSettings>("settings_get");
@@ -146,3 +203,7 @@ export const coreBridge = {
     }
   }
 };
+
+function mockInstalledFallback(instanceId: string): InstalledAddon[] {
+  return mockInstances.some((instance) => instance.id === instanceId) ? [] : [];
+}

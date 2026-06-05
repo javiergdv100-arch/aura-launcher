@@ -24,6 +24,15 @@ export interface Instance {
   lastPlayed: string | null;
 }
 
+export interface InstanceUpdate {
+  name: string;
+  mcVersion: string;
+  loader: Loader | string;
+  loaderVersion: string;
+  icon: string;
+  banner: string;
+}
+
 export interface AddonSearchRequest {
   provider: Provider;
   query: string;

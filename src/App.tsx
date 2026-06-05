@@ -3,6 +3,7 @@ import {
   Check,
   CirclePlay,
   Download,
+  Edit3,
   ExternalLink,
   FilePlus2,
   FolderOpen,
@@ -19,6 +20,8 @@ import {
   Search,
   Settings,
   Sparkles,
+  Save,
+  Trash2,
   User,
   X
 } from "lucide-react";
@@ -64,6 +67,8 @@ function App() {
   const [launchLog, setLaunchLog] = useState("Ready");
   const [isLaunching, setIsLaunching] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [editingInstance, setEditingInstance] = useState<Instance | null>(null);
+  const [deleteFiles, setDeleteFiles] = useState(false);
   const [newName, setNewName] = useState("New Aura Instance");
   const [newVersion, setNewVersion] = useState("1.21.1");
   const [newLoader, setNewLoader] = useState<Loader>("NeoForge");
@@ -109,6 +114,23 @@ function App() {
 
     return () => window.clearTimeout(timeoutId);
   }, [addPanelOpen, source, addonType, query, activeInstance?.id]);
+
+  useEffect(() => {
+    if (!activeInstance) return;
+
+    let cancelled = false;
+    async function loadInstalled() {
+      const installed = await coreBridge.listInstalledAddons(activeInstance.id);
+      if (!cancelled) {
+        setInstalledByInstance((current) => ({ ...current, [activeInstance.id]: installed }));
+      }
+    }
+
+    void loadInstalled();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeInstance?.id]);
 
   async function handleSearch(event?: FormEvent) {
     event?.preventDefault();
@@ -167,32 +189,10 @@ function App() {
     }
   }
 
-  function handleInstallAddon(addon: AddonSearchResult) {
+  async function handleInstallAddon(addon: AddonSearchResult) {
     if (!activeInstance) return;
 
     const provider = addon.provider === "curseforge" ? "curseforge" : "modrinth";
-    const installedAddon: InstalledAddon = {
-      id: `${addon.provider}-${addon.projectId}`,
-      name: addon.name,
-      provider,
-      fileName: `${addon.projectId}-${activeInstance.mcVersion}.jar`,
-      version: "latest",
-      status: "enabled",
-      required: false
-    };
-
-    setInstalledByInstance((current) => {
-      const existing = current[activeInstance.id] ?? [];
-      if (existing.some((item) => item.id === installedAddon.id)) {
-        return current;
-      }
-
-      return {
-        ...current,
-        [activeInstance.id]: [installedAddon, ...existing]
-      };
-    });
-
     setJobs((current) => [
       {
         id: `addon-${addon.projectId}-${Date.now()}`,
@@ -203,6 +203,32 @@ function App() {
       },
       ...current.slice(0, 5)
     ]);
+
+    try {
+      const installed = await coreBridge.installAddon(activeInstance.id, addon, addonType);
+      setInstalledByInstance((current) => ({ ...current, [activeInstance.id]: installed }));
+      setJobs((current) => [
+        {
+          id: `addon-complete-${addon.projectId}-${Date.now()}`,
+          label: `Installed ${addon.name}`,
+          provider,
+          status: "complete",
+          progress: 100
+        },
+        ...current.slice(0, 5)
+      ]);
+    } catch (error) {
+      setJobs((current) => [
+        {
+          id: `addon-failed-${addon.projectId}-${Date.now()}`,
+          label: error instanceof Error ? error.message : String(error),
+          provider,
+          status: "blocked",
+          progress: 100
+        },
+        ...current.slice(0, 5)
+      ]);
+    }
   }
 
   async function handleCreateInstance(event: FormEvent) {
@@ -213,6 +239,38 @@ function App() {
     setDrawerTab("addons");
     setDrawerOpen(true);
     setIsCreating(false);
+  }
+
+  async function handleUpdateInstance(event: FormEvent) {
+    event.preventDefault();
+    if (!editingInstance) return;
+
+    const updated = await coreBridge.updateInstance(editingInstance.id, {
+      name: editingInstance.name,
+      mcVersion: editingInstance.mcVersion,
+      loader: editingInstance.loader,
+      loaderVersion: editingInstance.loaderVersion,
+      icon: editingInstance.icon,
+      banner: editingInstance.banner
+    });
+
+    setInstances((current) => current.map((instance) => (instance.id === updated.id ? updated : instance)));
+    setEditingInstance(null);
+  }
+
+  async function handleDeleteInstance(instance: Instance) {
+    const remaining = await coreBridge.deleteInstance(instance.id, deleteFiles);
+    setInstances(remaining);
+    if (activeInstanceId === instance.id) {
+      setActiveInstanceId(remaining[0]?.id ?? "");
+    }
+    setInstalledByInstance((current) => {
+      const next = { ...current };
+      delete next[instance.id];
+      return next;
+    });
+    setEditingInstance(null);
+    setDeleteFiles(false);
   }
 
   function openManager(tab: DrawerTab) {
@@ -261,7 +319,7 @@ function App() {
         <button className="dock-button" onClick={() => openManager("downloads")} title="Downloads">
           <Download size={21} />
         </button>
-        <button className="dock-button" title="Settings">
+        <button className="dock-button" onClick={() => activeInstance && setEditingInstance(activeInstance)} title="Instance settings">
           <Settings size={21} />
         </button>
         <button className="dock-button account" title={account?.gamertag ?? "Account"}>
@@ -380,6 +438,9 @@ function App() {
                     >
                       <MoreHorizontal size={18} />
                     </button>
+                    <button onClick={() => setEditingInstance(instance)} title={`Edit ${instance.name}`}>
+                      <Edit3 size={16} />
+                    </button>
                   </div>
                 </article>
               ))}
@@ -495,7 +556,7 @@ function App() {
                                 {addon.provider} / {formatDownloads(addon.downloads)} downloads
                               </small>
                             </div>
-                            <button onClick={() => handleInstallAddon(addon)} title={`Install ${addon.name}`}>
+                            <button onClick={() => void handleInstallAddon(addon)} title={`Install ${addon.name}`}>
                               <Plus size={18} />
                             </button>
                           </article>
@@ -605,6 +666,111 @@ function App() {
                 Cancel
               </button>
               <button type="submit">Create</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {editingInstance && (
+        <div className="modal-backdrop" role="presentation">
+          <form className="modal instance-settings-modal" onSubmit={handleUpdateInstance}>
+            <div className="section-bar">
+              <div>
+                <span>Instance settings</span>
+                <strong>{editingInstance.name}</strong>
+              </div>
+              <Settings size={22} />
+            </div>
+
+            <label>
+              Name
+              <input
+                value={editingInstance.name}
+                onChange={(event) => setEditingInstance({ ...editingInstance, name: event.target.value })}
+              />
+            </label>
+
+            <div className="form-grid">
+              <label>
+                Minecraft version
+                <select
+                  value={editingInstance.mcVersion}
+                  onChange={(event) => setEditingInstance({ ...editingInstance, mcVersion: event.target.value })}
+                >
+                  {versions.map((version) => (
+                    <option key={version}>{version}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Loader
+                <select
+                  value={editingInstance.loader}
+                  onChange={(event) => setEditingInstance({ ...editingInstance, loader: event.target.value as Loader })}
+                >
+                  {loaders.map((loader) => (
+                    <option key={loader}>{loader}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <label>
+              Loader version
+              <input
+                value={editingInstance.loaderVersion}
+                onChange={(event) => setEditingInstance({ ...editingInstance, loaderVersion: event.target.value })}
+                placeholder="latest"
+              />
+            </label>
+
+            <div className="form-grid">
+              <label>
+                Icon
+                <input
+                  maxLength={3}
+                  value={editingInstance.icon}
+                  onChange={(event) => setEditingInstance({ ...editingInstance, icon: event.target.value.toUpperCase() })}
+                />
+              </label>
+
+              <label>
+                Banner
+                <select
+                  value={editingInstance.banner}
+                  onChange={(event) => setEditingInstance({ ...editingInstance, banner: event.target.value })}
+                >
+                  <option value="nebula">nebula</option>
+                  <option value="comet">comet</option>
+                  <option value="aurora">aurora</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="instance-path-box">
+              <span>Folder</span>
+              <strong>{editingInstance.path}</strong>
+            </div>
+
+            <label className="check-row">
+              <input type="checkbox" checked={deleteFiles} onChange={(event) => setDeleteFiles(event.target.checked)} />
+              Delete instance files too
+            </label>
+
+            <div className="modal-actions split-actions">
+              <button type="button" className="danger-button" onClick={() => void handleDeleteInstance(editingInstance)}>
+                <Trash2 size={16} />
+                Delete
+              </button>
+              <span />
+              <button type="button" onClick={() => setEditingInstance(null)}>
+                Cancel
+              </button>
+              <button type="submit">
+                <Save size={16} />
+                Save
+              </button>
             </div>
           </form>
         </div>

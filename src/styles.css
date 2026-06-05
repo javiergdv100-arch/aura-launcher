@@ -773,12 +773,55 @@ img.addon-icon {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
 }
 
+.instance-settings-modal {
+  width: min(560px, 100%);
+}
+
 .modal label {
   display: grid;
   gap: 7px;
   margin: 12px 0;
   color: #b8d2e9;
   font-size: 13px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.instance-path-box {
+  display: grid;
+  gap: 5px;
+  margin: 12px 0;
+  padding: 11px 12px;
+  border-radius: 8px;
+  background: rgba(2, 8, 18, 0.58);
+  border: 1px solid rgba(142, 210, 255, 0.14);
+}
+
+.instance-path-box span {
+  color: #9dbbd4;
+  font-size: 12px;
+}
+
+.instance-path-box strong {
+  color: #d7efff;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.modal label.check-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+}
+
+.check-row input {
+  width: 16px;
+  min-height: 16px;
 }
 
 .modal input,
@@ -799,6 +842,12 @@ img.addon-icon {
   margin-top: 16px;
 }
 
+.modal-actions.split-actions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+}
+
 .modal-actions button {
   min-width: 86px;
   min-height: 36px;
@@ -806,6 +855,19 @@ img.addon-icon {
   border-radius: 7px;
   color: #cbe6ff;
   background: rgba(255, 255, 255, 0.08);
+}
+
+.modal-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.modal-actions .danger-button {
+  color: #ffd6d6;
+  background: rgba(186, 38, 38, 0.34);
+  border: 1px solid rgba(255, 120, 120, 0.24);
 }
 
 .modal-actions button[type="submit"] {

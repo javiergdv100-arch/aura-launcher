@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",
+    "@xmcl/core": "^2.15.1",
+    "@xmcl/installer": "^6.1.2",
     "lucide-react": "^0.468.0",
     "minecraft-launcher-core": "^3.18.2",
     "prismarine-auth": "^3.1.1",

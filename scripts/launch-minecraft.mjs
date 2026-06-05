@@ -1,4 +1,13 @@
 import { Client } from "minecraft-launcher-core";
+import {
+  getFabricLoaders,
+  getForgeVersionList,
+  getQuiltLoaders,
+  installFabric,
+  installForge,
+  installNeoForged,
+  installQuiltVersion
+} from "@xmcl/installer";
 import prismarineAuth from "prismarine-auth";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -13,11 +22,14 @@ const payload = rawArg.startsWith("@")
   : JSON.parse(rawArg);
 const instanceName = payload.name ?? "Aura Instance";
 const versionNumber = payload.mcVersion ?? "1.21.1";
+const loaderName = payload.loader ?? "Vanilla";
+const loaderVersion = payload.loaderVersion ?? "latest";
 const memoryMax = payload.memoryMax ?? "4G";
 const memoryMin = payload.memoryMin ?? "2G";
 const root = payload.root ?? path.join(process.env.APPDATA ?? os.homedir(), "AuraLauncher", "minecraft");
-const logsDir = path.join(root, "logs");
-const cacheDir = path.join(root, "auth-cache");
+const sharedRoot = payload.sharedRoot ?? root;
+const logsDir = path.join(sharedRoot, "logs");
+const cacheDir = path.join(sharedRoot, "auth-cache");
 
 fs.mkdirSync(logsDir, { recursive: true });
 const logFile = path.join(logsDir, "aura-launch.log");
@@ -146,8 +158,92 @@ function ensureJavaPath() {
   return resolveJavaPath() ?? installManagedJava21();
 }
 
+function normalizeLoader(loader) {
+  return String(loader ?? "Vanilla").toLowerCase().replace(/\s+/g, "");
+}
+
+function isLatest(value) {
+  return !value || value === "latest" || value.endsWith(".x");
+}
+
+async function latestFabricLoaderVersion() {
+  const loaders = await getFabricLoaders();
+  return loaders.find((loader) => loader.stable)?.version ?? loaders[0]?.version;
+}
+
+async function latestQuiltLoaderVersion() {
+  const loaders = await getQuiltLoaders();
+  return loaders.find((loader) => loader.stable)?.version ?? loaders[0]?.version;
+}
+
+async function latestNeoForgeVersion(mcVersion) {
+  const response = await fetch("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml");
+  if (!response.ok) {
+    throw new Error(`NeoForge metadata returned ${response.status}`);
+  }
+
+  const xml = await response.text();
+  const versions = [...xml.matchAll(/<version>([^<]+)<\/version>/g)].map((match) => match[1]);
+  const parts = mcVersion.split(".");
+  const prefix = parts.length >= 3 ? `${parts[1]}.${parts[2]}.` : `${parts[1]}.`;
+  const compatible = versions.filter((version) => version.startsWith(prefix));
+  return compatible.at(-1);
+}
+
+async function ensureLoaderVersion(javaPath) {
+  const loader = normalizeLoader(loaderName);
+  fs.mkdirSync(path.join(root, "mods"), { recursive: true });
+  fs.mkdirSync(path.join(root, "resourcepacks"), { recursive: true });
+  fs.mkdirSync(path.join(root, "shaderpacks"), { recursive: true });
+
+  if (loader === "vanilla") {
+    return versionNumber;
+  }
+
+  log(`Preparing ${loaderName} loader for Minecraft ${versionNumber}.`);
+
+  if (loader === "fabric") {
+    const version = isLatest(loaderVersion) ? await latestFabricLoaderVersion() : loaderVersion;
+    if (!version) throw new Error(`No Fabric loader version found for ${versionNumber}`);
+    const id = await installFabric({ minecraftVersion: versionNumber, version, minecraft: root, side: "client" });
+    log(`Fabric ready: ${id}`);
+    return id;
+  }
+
+  if (loader === "quilt") {
+    const version = isLatest(loaderVersion) ? await latestQuiltLoaderVersion() : loaderVersion;
+    if (!version) throw new Error(`No Quilt loader version found for ${versionNumber}`);
+    const id = await installQuiltVersion({ minecraftVersion: versionNumber, version, minecraft: root, side: "client" });
+    log(`Quilt ready: ${id}`);
+    return id;
+  }
+
+  if (loader === "forge") {
+    const list = await getForgeVersionList({ minecraft: versionNumber });
+    const forge = isLatest(loaderVersion)
+      ? list.versions.find((version) => version.type === "recommended") ?? list.versions[0]
+      : { mcversion: versionNumber, version: loaderVersion };
+    if (!forge) throw new Error(`No Forge loader version found for ${versionNumber}`);
+    const id = await installForge(forge, root, { java: javaPath, side: "client" });
+    log(`Forge ready: ${id}`);
+    return id;
+  }
+
+  if (loader === "neoforge") {
+    const version = isLatest(loaderVersion) ? await latestNeoForgeVersion(versionNumber) : loaderVersion;
+    if (!version) {
+      throw new Error(`No NeoForge loader version found for Minecraft ${versionNumber}. Try setting an exact NeoForge version.`);
+    }
+    const id = await installNeoForged("neoforge", version, root, { java: javaPath, side: "client" });
+    log(`NeoForge ready: ${id}`);
+    return id;
+  }
+
+  throw new Error(`Unsupported loader: ${loaderName}`);
+}
+
 async function main() {
-  log(`Starting Aura Minecraft launch for ${instanceName} (${versionNumber})`);
+  log(`Starting Aura Minecraft launch for ${instanceName} (${versionNumber}, ${loaderName})`);
   log("Authenticating with Microsoft using device-code login.");
 
   fs.mkdirSync(cacheDir, { recursive: true });
@@ -202,6 +298,7 @@ async function main() {
   } else {
     log("Java 21 runtime was not auto-detected. Falling back to PATH java.");
   }
+  const launchVersion = await ensureLoaderVersion(javaPath);
 
   const options = {
     clientPackage: null,
@@ -218,7 +315,7 @@ async function main() {
     },
     root,
     version: {
-      number: versionNumber,
+      number: launchVersion,
       type: "release"
     },
     memory: {
