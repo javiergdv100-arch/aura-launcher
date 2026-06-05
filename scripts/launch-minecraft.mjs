@@ -1,16 +1,20 @@
 import { Client } from "minecraft-launcher-core";
-import { Auth } from "msmc";
+import { Authflow, Titles } from "prismarine-auth";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const payload = JSON.parse(process.argv[2] ?? "{}");
+const rawArg = process.argv[2] ?? "{}";
+const payload = rawArg.startsWith("@")
+  ? JSON.parse(fs.readFileSync(rawArg.slice(1), "utf8"))
+  : JSON.parse(rawArg);
 const instanceName = payload.name ?? "Aura Instance";
 const versionNumber = payload.mcVersion ?? "1.21.1";
 const memoryMax = payload.memoryMax ?? "4G";
 const memoryMin = payload.memoryMin ?? "2G";
 const root = payload.root ?? path.join(process.env.APPDATA ?? os.homedir(), "AuraLauncher", "minecraft");
 const logsDir = path.join(root, "logs");
+const cacheDir = path.join(root, "auth-cache");
 
 fs.mkdirSync(logsDir, { recursive: true });
 const logFile = path.join(logsDir, "aura-launch.log");
@@ -23,28 +27,53 @@ function log(message) {
 
 async function main() {
   log(`Starting Aura Minecraft launch for ${instanceName} (${versionNumber})`);
-  log("Opening Microsoft login flow. Use the browser window if prompted.");
+  log("Authenticating with Microsoft using device-code login.");
 
-  const authManager = new Auth("select_account");
-  authManager.on("load", (_asset, message) => log(`Auth: ${message}`));
+  fs.mkdirSync(cacheDir, { recursive: true });
 
-  const xboxManager = await authManager.launch("raw", {
-    width: 980,
-    height: 720,
-    suppress: true
+  const authflow = new Authflow(
+    "aura-launcher-player",
+    cacheDir,
+    {
+      flow: "live",
+      authTitle: Titles.MinecraftJava
+    },
+    (code) => {
+      log("");
+      log("=== MICROSOFT LOGIN REQUIRED ===");
+      log(code.message);
+      log(`Code: ${code.user_code}`);
+      log(`URL: ${code.verification_uri}`);
+      log("Keep this window open. Minecraft will launch after login completes.");
+      log("================================");
+      log("");
+    }
+  );
+
+  const minecraftToken = await authflow.getMinecraftJavaToken({
+    fetchProfile: true,
+    fetchEntitlements: true
   });
 
-  const minecraftToken = await xboxManager.getMinecraft();
-  const entitlements = await minecraftToken.entitlements();
-
-  if (!minecraftToken.isDemo() && !entitlements.includes("game_minecraft") && !entitlements.includes("product_minecraft")) {
-    log("Minecraft Java ownership was not detected for this account.");
+  const licenses = minecraftToken.entitlements?.items?.map((item) => item.name) ?? [];
+  if (!licenses.includes("game_minecraft") && !licenses.includes("product_minecraft")) {
+    log("Minecraft Java ownership was not detected. If launch fails, confirm this account owns Minecraft Java Edition.");
   }
 
   const launcher = new Client();
   const options = {
     clientPackage: null,
-    authorization: minecraftToken.mclc(),
+    authorization: {
+      access_token: minecraftToken.token,
+      client_token: minecraftToken.profile.id,
+      uuid: minecraftToken.profile.id,
+      name: minecraftToken.profile.name,
+      user_properties: "{}",
+      meta: {
+        type: "msa",
+        demo: false
+      }
+    },
     root,
     version: {
       number: versionNumber,

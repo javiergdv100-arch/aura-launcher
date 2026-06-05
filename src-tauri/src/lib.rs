@@ -1,9 +1,9 @@
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, OpenOptions},
+    fs::{self},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -355,16 +355,7 @@ fn spawn_minecraft_helper(instance: &Instance) -> Result<(), String> {
     let root = aura_minecraft_root();
     let logs_dir = root.join("logs");
     fs::create_dir_all(&logs_dir).map_err(|error| format!("Could not create launch logs folder: {error}"))?;
-
-    let log_path = logs_dir.join("aura-helper-process.log");
-    let stdout = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .map_err(|error| format!("Could not open launch log: {error}"))?;
-    let stderr = stdout
-        .try_clone()
-        .map_err(|error| format!("Could not prepare launch log: {error}"))?;
+    let request_path = root.join("last-launch-request.json");
 
     let payload = serde_json::json!({
         "id": instance.id,
@@ -376,18 +367,23 @@ fn spawn_minecraft_helper(instance: &Instance) -> Result<(), String> {
         "memoryMin": "2G"
     });
 
-    Command::new("node")
-        .arg(script_path)
-        .arg(payload.to_string())
+    fs::write(&request_path, serde_json::to_vec_pretty(&payload).map_err(|error| error.to_string())?)
+        .map_err(|error| format!("Could not write launch request: {error}"))?;
+
+    Command::new("powershell.exe")
+        .arg("-NoExit")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-Command")
+        .arg(format!(
+            "& node '{}' '@{}'",
+            script_path.display(),
+            request_path.display()
+        ))
         .current_dir(project_root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr))
         .spawn()
         .map_err(|error| {
-            format!(
-                "Could not start Minecraft helper. Make sure Node.js is installed and available in PATH. Error: {error}"
-            )
+            format!("Could not start Minecraft helper window. Make sure Node.js is installed and available in PATH. Error: {error}")
         })?;
 
     Ok(())
