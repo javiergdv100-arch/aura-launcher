@@ -33,29 +33,43 @@ async function main() {
 
   fs.mkdirSync(cacheDir, { recursive: true });
 
-  const authflow = new Authflow(
-    "aura-launcher-player",
-    cacheDir,
-    {
-      flow: "live",
-      authTitle: Titles.MinecraftJava
-    },
-    (code) => {
-      log("");
-      log("=== MICROSOFT LOGIN REQUIRED ===");
-      log(code.message);
-      log(`Code: ${code.user_code}`);
-      log(`URL: ${code.verification_uri}`);
-      log("Keep this window open. Minecraft will launch after login completes.");
-      log("================================");
-      log("");
-    }
-  );
+  const authOptions = {
+    flow: "live",
+    authTitle: Titles.MinecraftNintendoSwitch,
+    deviceType: "Nintendo"
+  };
 
-  const minecraftToken = await authflow.getMinecraftJavaToken({
-    fetchProfile: true,
-    fetchEntitlements: true
-  });
+  const codeCallback = (code) => {
+    log("");
+    log("=== MICROSOFT LOGIN REQUIRED ===");
+    log(code.message);
+    log(`Code: ${code.user_code}`);
+    log(`URL: ${code.verification_uri}`);
+    log("Keep this window open. Minecraft will launch after login completes.");
+    log("================================");
+    log("");
+  };
+
+  const fetchToken = (options) => {
+    const authflow = new Authflow("aura-launcher-player", cacheDir, options, codeCallback);
+    return authflow.getMinecraftJavaToken({
+      fetchProfile: true,
+      fetchEntitlements: true
+    });
+  };
+
+  let minecraftToken;
+  try {
+    minecraftToken = await fetchToken(authOptions);
+  } catch (error) {
+    const message = String(error?.stack ?? error);
+    if (!message.includes("403 Forbidden")) {
+      throw error;
+    }
+
+    log("Cached Microsoft/Xbox auth failed with 403. Retrying with a fresh device login.");
+    minecraftToken = await fetchToken({ ...authOptions, forceRefresh: true });
+  }
 
   const licenses = minecraftToken.entitlements?.items?.map((item) => item.name) ?? [];
   if (!licenses.includes("game_minecraft") && !licenses.includes("product_minecraft")) {
