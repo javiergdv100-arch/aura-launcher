@@ -1,9 +1,12 @@
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self},
+    fs::{self, File},
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,12 +156,14 @@ async fn instances_launch(instance_id: String) -> Result<LaunchResult, String> {
             last_played: None,
         });
 
-    spawn_minecraft_helper(&instance)?;
+    let login = spawn_minecraft_helper(&instance)?;
 
     Ok(LaunchResult {
         instance_id,
         status: "queued".into(),
-        log: "Minecraft launch started. Complete the Microsoft login in the browser if prompted.".into(),
+        log: login.unwrap_or_else(|| {
+            "Minecraft launch started. Login code is being generated; check %APPDATA%\\AuraLauncher\\minecraft\\logs\\aura-launch.log.".into()
+        }),
     })
 }
 
@@ -342,7 +347,7 @@ fn sanitize_id(value: &str) -> String {
         .collect()
 }
 
-fn spawn_minecraft_helper(instance: &Instance) -> Result<(), String> {
+fn spawn_minecraft_helper(instance: &Instance) -> Result<Option<String>, String> {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or_else(|| "Could not resolve Aura project root".to_string())?;
@@ -356,6 +361,8 @@ fn spawn_minecraft_helper(instance: &Instance) -> Result<(), String> {
     let logs_dir = root.join("logs");
     fs::create_dir_all(&logs_dir).map_err(|error| format!("Could not create launch logs folder: {error}"))?;
     let request_path = root.join("last-launch-request.json");
+    let log_path = logs_dir.join("aura-launch.log");
+    let log_start = fs::metadata(&log_path).map(|metadata| metadata.len()).unwrap_or(0);
 
     let payload = serde_json::json!({
         "id": instance.id,
@@ -370,23 +377,63 @@ fn spawn_minecraft_helper(instance: &Instance) -> Result<(), String> {
     fs::write(&request_path, serde_json::to_vec_pretty(&payload).map_err(|error| error.to_string())?)
         .map_err(|error| format!("Could not write launch request: {error}"))?;
 
-    Command::new("powershell.exe")
-        .arg("-NoExit")
-        .arg("-ExecutionPolicy")
-        .arg("Bypass")
-        .arg("-Command")
-        .arg(format!(
-            "& node '{}' '@{}'",
-            script_path.display(),
-            request_path.display()
-        ))
+    stop_existing_minecraft_helpers();
+
+    Command::new("node")
+        .arg(script_path)
+        .arg(format!("@{}", request_path.display()))
         .current_dir(project_root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .map_err(|error| {
-            format!("Could not start Minecraft helper window. Make sure Node.js is installed and available in PATH. Error: {error}")
+            format!("Could not start Minecraft helper. Make sure Node.js is installed and available in PATH. Error: {error}")
         })?;
 
-    Ok(())
+    Ok(wait_for_login_code(&log_path, log_start))
+}
+
+fn stop_existing_minecraft_helpers() {
+    let _ = Command::new("powershell.exe")
+        .arg("-NoProfile")
+        .arg("-Command")
+        .arg("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*launch-minecraft.mjs*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+fn wait_for_login_code(log_path: &Path, start_offset: u64) -> Option<String> {
+    let deadline = Instant::now() + Duration::from_secs(12);
+
+    while Instant::now() < deadline {
+        if let Ok(mut file) = File::open(log_path) {
+            let _ = file.seek(SeekFrom::Start(start_offset));
+            let mut content = String::new();
+            let _ = file.read_to_string(&mut content);
+
+            if let Some(code) = extract_latest_code(&content) {
+                return Some(format!(
+                    "Microsoft login required. Go to https://www.microsoft.com/link and enter code: {code}"
+                ));
+            }
+        }
+
+        thread::sleep(Duration::from_millis(350));
+    }
+
+    None
+}
+
+fn extract_latest_code(content: &str) -> Option<String> {
+    content
+        .lines()
+        .filter_map(|line| line.split("Code: ").nth(1))
+        .last()
+        .map(|code| code.trim().to_string())
+        .filter(|code| !code.is_empty())
 }
 
 fn aura_minecraft_root() -> PathBuf {

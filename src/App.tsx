@@ -62,6 +62,7 @@ function App() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [launchLog, setLaunchLog] = useState("Ready");
+  const [isLaunching, setIsLaunching] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState("New Aura Instance");
   const [newVersion, setNewVersion] = useState("1.21.1");
@@ -141,21 +142,29 @@ function App() {
   }
 
   async function handleLaunch(instance = activeInstance) {
-    if (!instance) return;
+    if (!instance || isLaunching) return;
 
+    setIsLaunching(true);
     setLaunchLog(`Preparing ${instance.name}...`);
-    const result = await coreBridge.launchInstance(instance.id);
-    setLaunchLog(result.log);
-    setJobs((current) => [
-      {
-        id: `launch-${Date.now()}`,
-        label: `Launch ${instance.name}`,
-        provider: instance.source === "curseforge" ? "curseforge" : instance.source === "modrinth" ? "modrinth" : "aura",
-        status: result.status === "queued" ? "queued" : "downloading",
-        progress: 8
-      },
-      ...current.slice(0, 4)
-    ]);
+
+    try {
+      const result = await coreBridge.launchInstance(instance.id);
+      setLaunchLog(result.log);
+      setJobs((current) => [
+        {
+          id: `launch-${Date.now()}`,
+          label: `Launch ${instance.name}`,
+          provider: instance.source === "curseforge" ? "curseforge" : instance.source === "modrinth" ? "modrinth" : "aura",
+          status: result.status === "queued" ? "queued" : "downloading",
+          progress: 8
+        },
+        ...current.slice(0, 4)
+      ]);
+    } catch (error) {
+      setLaunchLog(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsLaunching(false);
+    }
   }
 
   function handleInstallAddon(addon: AddonSearchResult) {
@@ -291,9 +300,9 @@ function App() {
               <span>{activeInstance.lastPlayed ? `Last played ${activeInstance.lastPlayed}` : "Never played"}</span>
             </div>
 
-            <button className="play-button" onClick={() => void handleLaunch()}>
+            <button className="play-button" onClick={() => void handleLaunch()} disabled={isLaunching}>
               <CirclePlay size={26} />
-              <span>Play</span>
+              <span>{isLaunching ? "Preparing..." : "Play"}</span>
             </button>
 
             <div className="quick-actions">
