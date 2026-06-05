@@ -6,6 +6,7 @@ import type {
   InstalledAddon,
   Instance,
   InstanceUpdate,
+  LaunchStatus,
   LaunchResult,
   LauncherSettings,
   Loader
@@ -19,6 +20,7 @@ type CommandName =
   | "instances_update"
   | "instances_delete"
   | "instances_launch"
+  | "launch_status"
   | "addons_list"
   | "addons_install"
   | "addons_search"
@@ -125,6 +127,19 @@ export const coreBridge = {
         instanceId,
         status: "queued",
         log: "Browser preview: native Minecraft process launching is available through Tauri."
+      };
+    }
+  },
+
+  async getLaunchStatus(): Promise<LaunchStatus> {
+    try {
+      return await invokeNative<LaunchStatus>("launch_status");
+    } catch {
+      return {
+        phase: "preview",
+        message: "Browser preview does not expose native launch progress.",
+        progress: 0,
+        active: false
       };
     }
   },

@@ -35,6 +35,7 @@ import type {
   DownloadJob,
   Instance,
   InstalledAddon,
+  LaunchStatus,
   Loader,
   Provider
 } from "./types";
@@ -44,6 +45,12 @@ type AddSource = Provider | "local" | "quick";
 
 const loaders: Loader[] = ["Vanilla", "Forge", "Fabric", "Quilt", "NeoForge"];
 const versions = ["1.21.1", "1.20.1", "1.19.2", "1.18.2", "1.16.5"];
+const idleActivity: LaunchStatus = {
+  phase: "idle",
+  message: "Ready",
+  progress: 0,
+  active: false
+};
 
 function formatDownloads(downloads: number) {
   return new Intl.NumberFormat("en", { notation: "compact" }).format(downloads);
@@ -66,6 +73,7 @@ function App() {
   const [searchError, setSearchError] = useState("");
   const [launchLog, setLaunchLog] = useState("Ready");
   const [isLaunching, setIsLaunching] = useState(false);
+  const [activity, setActivity] = useState<LaunchStatus>(idleActivity);
   const [isCreating, setIsCreating] = useState(false);
   const [editingInstance, setEditingInstance] = useState<Instance | null>(null);
   const [deleteFiles, setDeleteFiles] = useState(false);
@@ -132,6 +140,20 @@ function App() {
     };
   }, [activeInstance?.id]);
 
+  useEffect(() => {
+    if (!activity.active || activity.phase === "addons") return;
+
+    const intervalId = window.setInterval(() => {
+      void coreBridge.getLaunchStatus().then((status) => {
+        if (status.phase === "idle") return;
+        setActivity(status);
+        setLaunchLog(status.message);
+      });
+    }, 750);
+
+    return () => window.clearInterval(intervalId);
+  }, [activity.active]);
+
   async function handleSearch(event?: FormEvent) {
     event?.preventDefault();
     await runSearch();
@@ -168,10 +190,22 @@ function App() {
 
     setIsLaunching(true);
     setLaunchLog(`Preparing ${instance.name}...`);
+    setActivity({
+      phase: "starting",
+      message: `Preparing ${instance.name}...`,
+      progress: 4,
+      active: true
+    });
 
     try {
       const result = await coreBridge.launchInstance(instance.id);
       setLaunchLog(result.log);
+      setActivity((current) => ({
+        phase: current.phase === "idle" ? "queued" : current.phase,
+        message: result.log,
+        progress: Math.max(current.progress, 8),
+        active: true
+      }));
       setJobs((current) => [
         {
           id: `launch-${Date.now()}`,
@@ -183,7 +217,14 @@ function App() {
         ...current.slice(0, 4)
       ]);
     } catch (error) {
-      setLaunchLog(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setLaunchLog(message);
+      setActivity({
+        phase: "error",
+        message,
+        progress: 100,
+        active: false
+      });
     } finally {
       setIsLaunching(false);
     }
@@ -193,6 +234,12 @@ function App() {
     if (!activeInstance) return;
 
     const provider = addon.provider === "curseforge" ? "curseforge" : "modrinth";
+    setActivity({
+      phase: "addons",
+      message: `Installing ${addon.name}...`,
+      progress: 18,
+      active: true
+    });
     setJobs((current) => [
       {
         id: `addon-${addon.projectId}-${Date.now()}`,
@@ -207,6 +254,12 @@ function App() {
     try {
       const installed = await coreBridge.installAddon(activeInstance.id, addon, addonType);
       setInstalledByInstance((current) => ({ ...current, [activeInstance.id]: installed }));
+      setActivity({
+        phase: "addons",
+        message: `Installed ${addon.name}`,
+        progress: 100,
+        active: false
+      });
       setJobs((current) => [
         {
           id: `addon-complete-${addon.projectId}-${Date.now()}`,
@@ -218,10 +271,17 @@ function App() {
         ...current.slice(0, 5)
       ]);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setActivity({
+        phase: "error",
+        message,
+        progress: 100,
+        active: false
+      });
       setJobs((current) => [
         {
           id: `addon-failed-${addon.projectId}-${Date.now()}`,
-          label: error instanceof Error ? error.message : String(error),
+          label: message,
           provider,
           status: "blocked",
           progress: 100
@@ -362,6 +422,16 @@ function App() {
               <CirclePlay size={26} />
               <span>{isLaunching ? "Preparing..." : "Play"}</span>
             </button>
+
+            <div className={`play-progress ${activity.phase !== "idle" ? "visible" : ""}`}>
+              <div className="play-progress-top">
+                <span>{activity.message}</span>
+                <strong>{Math.round(activity.progress)}%</strong>
+              </div>
+              <div className="play-progress-track">
+                <div style={{ width: `${Math.min(100, Math.max(0, activity.progress))}%` }} />
+              </div>
+            </div>
 
             <div className="quick-actions">
               <button onClick={() => openManager("addons")}>

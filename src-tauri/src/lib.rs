@@ -154,6 +154,15 @@ struct LaunchResult {
     log: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchStatus {
+    phase: String,
+    message: String,
+    progress: u8,
+    active: bool,
+}
+
 #[tauri::command]
 async fn accounts_login_microsoft() -> Result<Account, String> {
     Ok(Account {
@@ -268,6 +277,11 @@ async fn instances_launch(instance_id: String) -> Result<LaunchResult, String> {
             "Minecraft launch started. Login code is being generated; check %APPDATA%\\AuraLauncher\\minecraft\\logs\\aura-launch.log.".into()
         }),
     })
+}
+
+#[tauri::command]
+async fn launch_status() -> Result<LaunchStatus, String> {
+    Ok(read_launch_status())
 }
 
 #[tauri::command]
@@ -859,6 +873,191 @@ fn extract_latest_code(content: &str) -> Option<String> {
         .filter(|code| !code.is_empty())
 }
 
+fn read_launch_status() -> LaunchStatus {
+    let log_path = aura_minecraft_root().join("logs").join("aura-launch.log");
+    let content = fs::read_to_string(log_path).unwrap_or_default();
+    parse_launch_status(&content)
+}
+
+fn parse_launch_status(content: &str) -> LaunchStatus {
+    let mut status = LaunchStatus {
+        phase: "idle".into(),
+        message: "Ready".into(),
+        progress: 0,
+        active: false,
+    };
+
+    for line in content.lines().rev().take(180) {
+        if line.contains("Launch failed:") {
+            return LaunchStatus {
+                phase: "error".into(),
+                message: strip_log_prefix(line).replace("Launch failed: ", ""),
+                progress: 100,
+                active: false,
+            };
+        }
+
+        if line.contains("Minecraft process closed with code") {
+            return LaunchStatus {
+                phase: "closed".into(),
+                message: strip_log_prefix(line),
+                progress: 100,
+                active: false,
+            };
+        }
+
+        if line.contains("Datafixer Bootstrap") || line.contains("Setting user:") {
+            return LaunchStatus {
+                phase: "running".into(),
+                message: "Minecraft is running".into(),
+                progress: 100,
+                active: false,
+            };
+        }
+
+        if line.contains("Launching with arguments") {
+            status = LaunchStatus {
+                phase: "launching".into(),
+                message: "Starting Minecraft window".into(),
+                progress: 96,
+                active: true,
+            };
+            break;
+        }
+
+        if line.contains("Downloaded assets") {
+            status = LaunchStatus {
+                phase: "minecraft".into(),
+                message: "Minecraft assets ready".into(),
+                progress: 88,
+                active: true,
+            };
+            break;
+        }
+
+        if let Some(progress) = parse_mclc_progress(line) {
+            return progress;
+        }
+
+        if line.contains("NeoForge ready:")
+            || line.contains("Forge ready:")
+            || line.contains("Fabric ready:")
+            || line.contains("Quilt ready:")
+        {
+            status = LaunchStatus {
+                phase: "loader".into(),
+                message: strip_log_prefix(line),
+                progress: 52,
+                active: true,
+            };
+            break;
+        }
+
+        if line.contains("Preparing ") && line.contains(" loader ") {
+            status = LaunchStatus {
+                phase: "loader".into(),
+                message: strip_log_prefix(line),
+                progress: 34,
+                active: true,
+            };
+            break;
+        }
+
+        if line.contains("Extracting Java 21 runtime") {
+            status = LaunchStatus {
+                phase: "java".into(),
+                message: "Extracting Java 21 runtime".into(),
+                progress: 22,
+                active: true,
+            };
+            break;
+        }
+
+        if line.contains("Downloading Eclipse Temurin JRE 21") {
+            status = LaunchStatus {
+                phase: "java".into(),
+                message: "Downloading Java 21 runtime".into(),
+                progress: 14,
+                active: true,
+            };
+            break;
+        }
+
+        if line.contains("Using Java runtime:") {
+            status = LaunchStatus {
+                phase: "java".into(),
+                message: "Java runtime ready".into(),
+                progress: 28,
+                active: true,
+            };
+            break;
+        }
+
+        if let Some(code) = line.split("Code: ").nth(1) {
+            status = LaunchStatus {
+                phase: "auth".into(),
+                message: format!("Microsoft login code: {}", code.trim()),
+                progress: 8,
+                active: true,
+            };
+            break;
+        }
+
+        if line.contains("Authenticating with Microsoft") {
+            status = LaunchStatus {
+                phase: "auth".into(),
+                message: "Authenticating with Microsoft".into(),
+                progress: 6,
+                active: true,
+            };
+            break;
+        }
+
+        if line.contains("Starting Aura Minecraft launch") {
+            status = LaunchStatus {
+                phase: "starting".into(),
+                message: strip_log_prefix(line),
+                progress: 3,
+                active: true,
+            };
+            break;
+        }
+    }
+
+    status
+}
+
+fn parse_mclc_progress(line: &str) -> Option<LaunchStatus> {
+    let json = line.split("Progress: ").nth(1)?;
+    let value = serde_json::from_str::<serde_json::Value>(json).ok()?;
+    let task = value.get("task")?.as_u64()?;
+    let total = value.get("total")?.as_u64()?.max(1);
+    let progress = (task.saturating_mul(100) / total).min(100) as u8;
+    let progress = match value.get("type").and_then(|value| value.as_str()).unwrap_or("") {
+        "assets" => 58 + ((progress as u16 * 30) / 100) as u8,
+        "libraries" => 48 + ((progress as u16 * 22) / 100) as u8,
+        "version" => 40 + ((progress as u16 * 10) / 100) as u8,
+        other if !other.is_empty() => 42 + ((progress as u16 * 45) / 100) as u8,
+        _ => 42 + ((progress as u16 * 45) / 100) as u8,
+    };
+
+    Some(LaunchStatus {
+        phase: "minecraft".into(),
+        message: format!(
+            "Downloading {} {}/{}",
+            value.get("type").and_then(|value| value.as_str()).unwrap_or("files"),
+            task,
+            total
+        ),
+        progress,
+        active: true,
+    })
+}
+
+fn strip_log_prefix(line: &str) -> String {
+    line.split("] ").nth(1).unwrap_or(line).trim().to_string()
+}
+
 fn aura_minecraft_root() -> PathBuf {
     if let Ok(appdata) = std::env::var("APPDATA") {
         return PathBuf::from(appdata).join("AuraLauncher").join("minecraft");
@@ -900,6 +1099,7 @@ pub fn run() {
             instances_update,
             instances_delete,
             instances_launch,
+            launch_status,
             addons_list,
             addons_install,
             addons_search,

@@ -81,3 +81,10 @@ export interface LaunchResult {
   status: string;
   log: string;
 }
+
+export interface LaunchStatus {
+  phase: string;
+  message: string;
+  progress: number;
+  active: boolean;
+}
